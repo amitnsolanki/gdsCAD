@@ -36,14 +36,10 @@ contain references to other Cells, or contain drawing geometry.
     gdsCAD (based on gdspy) is released under the terms of the GNU GPL
     
 """
-from __future__ import print_function
-from __future__ import absolute_import
 
 
-import sys
 import struct
 import numbers
-import inspect
 import datetime
 import warnings
 import numpy as np
@@ -69,9 +65,6 @@ try:
 except ImportError as err:
     warnings.warn(str(err) + '. It will not be possible to import DXF artwork.')
 
-if sys.version > '3':
-    long = int
-
 default_layer = 1
 default_datatype = 0
 
@@ -85,8 +78,6 @@ def _show(self):
     ax = plt.gca()
     ax.set_aspect('equal')
     ax.margins(0.1)    
-
-    textbox = []    
     
     artists=self.artist()
     for a in artists:
@@ -97,82 +88,13 @@ def _show(self):
             ax.add_line(a)
         else:
             ax.add_artist(a)
-            textbox.append(a.get_position())
     
-    if textbox:        
-        textbox = np.array(textbox)
-        ax.update_datalim_numerix(textbox[:,0], textbox[:,1])
-
     ax.autoscale(True)
     plt.show()
     
     return ax
 
-
-
-class BooleanOps(object):
-    """
-    Boolean operations base class.
-    """
-
-    @staticmethod
-    def _shapely2gds(shape):
-        """
-        Convert a shapely Polygon or Multipolygon to a gdsCAD Boundary or Elements.
-        """
-        msg = 'A boolean op has resulted in interior voids. These will be lost.'
-        if isinstance(shape, shapely.geometry.MultiPolygon):
-            for g in shape:
-                if g.interiors:
-                    warnings.warn(msg)                    
-            return Elements([Boundary(g.exterior) for g in shape])
-        else:
-            if shape.interiors:
-                warnings.warn(msg)                    
-                
-            return Boundary(shape.exterior)    
-
-    def __and__(self, other):
-        """
-        The intersection between two drawing elements.        
-        """
-
-        new = self.shape.intersection(other.shape)
-
-        return self._shapely2gds(new)
-
-    def __or__(self, other):
-        """
-        The union between two drawing elements.
-
-        # How do we decide what the attributes (layer, datatype, etc) should be
-        """        
-        new = self.shape.union(other.shape)
-
-        return self._shapely2gds(new)
-
-    def __sub__(self, other):
-        """
-        The difference between two drawing elements.
-
-        TODO: This does not deal with interior voids.
-        """
-        new = self.shape.difference(other.shape)
-
-        return self._shapely2gds(new)
-
-    def __xor__(self, other):
-        """
-        The symmetric difference between two drawing elements.
-
-        TODO: This does not deal with interior voids.
-        """
-        new = self.shape.symmetric_difference(other.shape)
-
-        return self._shapely2gds(new)
-
-
-class ElementBase(BooleanOps, object):
+class ElementBase(object):
     """
     Base class for geometric elements. Other drawing elements derive from this.
     """
@@ -180,7 +102,7 @@ class ElementBase(BooleanOps, object):
     def _layer_properties(layer):
         # Default colors from previous versions
         colors = ['k', 'r', 'g', 'b', 'c', 'm', 'y']
-        colors += matplotlib.cm.gist_ncar(np.linspace(0.98, 0, 15)).tolist()
+        colors += matplotlib.cm.gist_ncar(np.linspace(0.98, 0, 15))
         color = colors[layer % len(colors)]
         return {'color': color}
 
@@ -191,26 +113,6 @@ class ElementBase(BooleanOps, object):
     @property
     def points(self):
         return self._points
-
-    @points.setter
-    def points(self, points, dtype=np.float32):
-        """
-        Change points for this object.
-
-        :returns: self
-        """
-        self._points = np.array(points, dtype=dtype)
-        self._bbox = None
-        return self
-
-    @property
-    def laydat(self):
-        return (self.layer, self.datatype)
-    
-    @laydat.setter
-    def laydat(self, new_laydat):
-        self._layer = new_laydat[0]
-        self._datatype = new_laydat[1]
 
     def copy(self, suffix=None):
         """
@@ -357,7 +259,7 @@ class Boundary(ElementBase):
     
     show=_show
     
-    def __init__(self, points, layer=None, datatype=None, laydat=None, verbose=False, dtype=np.float32) :
+    def __init__(self, points, layer=None, datatype=None, verbose=False, dtype=np.float32) :
         points = np.asarray(points, dtype=dtype)
         if (points[0] != points[-1]).any():
             points = np.concatenate((points, [points[0]]))
@@ -371,10 +273,6 @@ class Boundary(ElementBase):
             warnings.warn("[GDSPY] A polygon with more than 8191 points was created."
                           "Multiple XY required which is an unofficial GDSII extension.", stacklevel=2)
 
-        ## Enable specifying (layer, datatype) with laydat tuple
-        if laydat:
-            (layer, datatype) = laydat
-
         if layer is None:
             self.layer = default_layer
         else:
@@ -385,42 +283,23 @@ class Boundary(ElementBase):
         else:
             self.datatype = datatype
 
-    def __repr__(self):
-        return self.__class__.__name__ + \
-            "(laydat=({},{}), num_pts={})".format(self.layer, self.datatype, len(self.points))
-
     def __str__(self):
-        return self.__class__.__name__ + \
-            "(laydat=({},{}), points={})".format(self.layer, self.datatype, self.points.tolist())
+        return "Boundary ({} vertices, layer {}, datatype {})".format(len(self.points), self.layer, self.datatype)
 
     def area(self):
         """
         Calculates the area of the element.
+        
+        Assumes that the Boundary respects the GDSII requirement that the path
+        be simple and closed.
         """
-        return self.shape.area
 
-    def centroid(self):
-        """
-        Calculates the centroid of the element.
-
-        :returns: The tuple (x, y) of element's centroid
-        """
-        centroid = self.shape.centroid
-        return (centroid.x, centroid.y)
-
-    def is_ccw(self):
-        """
-        Returns True if coordinates are in counter-clockwise order
-        """
-        points = self.points.tolist()
-        return sum((points[i+1][0]-points[i][0])*(points[i+1][1]+points[i][1]) for i in range(len(points)-1)) < 0
-
-    def to_ccw(self):
-        """
-        Fixes coordinates to be in counter-clockwise order
-        """
-        if not self.is_ccw():
-            self.points = list(reversed(self.points.tolist()))
+        # shoestring method for area of an irregular polygon
+        first, second = self._points[:-1], self._points[1:]
+        
+        area = first[:,0]*second[:,1] - second[:,0]*first[:,1]
+        return  abs(area.sum())/2.0        
+        
 
     def to_gds(self, multiplier): 
         """
@@ -470,16 +349,6 @@ class Boundary(ElementBase):
         """
         return [matplotlib.patches.Polygon(self.points, closed=True, lw=0, **self._layer_properties(self.layer))]
 
-    @property
-    def shape(self):
-        """
-        A shapely polygon representation of the boundary
-        """
-        s = shapely.geometry.asPolygon(self._points)
-        s.laydat = self.laydat
-        return s
-
-
 class Path(ElementBase):
     """
     An unfilled, unclosed polygonal line of fixed width.
@@ -518,7 +387,7 @@ class Path(ElementBase):
     """
     show=_show
 
-    def __init__(self, points, width=1.0, layer=None, datatype=None, laydat=None, pathtype=0, verbose=False, dtype=np.float32):
+    def __init__(self, points, width=1.0, layer=None, datatype=None, pathtype=0, verbose=False, dtype=np.float32):
         ElementBase.__init__(self, points, dtype=dtype)
 
 
@@ -532,10 +401,6 @@ class Path(ElementBase):
         self.width=width
         self.pathtype=pathtype
 
-        ## Enable specifying (layer, datatype) with laydat tuple
-        if laydat:
-            (layer, datatype) = laydat
-
         if layer is None:
             self.layer = default_layer
         else:
@@ -546,28 +411,20 @@ class Path(ElementBase):
         else:
             self.datatype = datatype
 
-    def __repr__(self):
-        return self.__class__.__name__ + \
-            "(laydat=({},{}), width={}, pathtype={}, num_pts={})".format(self.layer, self.datatype, self.width, self.pathtype, len(self.points))
 
     def __str__(self):
-        return self.__class__.__name__ + \
-            "(laydat=({},{}), width={}, pathtype={}, points={})".format(self.layer, self.datatype, self.width, self.pathtype, self.points.tolist())
+        return "Path ({} vertices, layer {}, datatype {})".format(len(self.points), self.layer, self.datatype)
 
     def area(self):
         """
-        Calculates the area of the element.
+        Calculates the approximate area of the element.
+        
+        This is only an estimate. It does not correctly deal with overlaps at
+        corners.
         """
-        return self.shape.area
 
-    def centroid(self):
-        """
-        Calculates the centroid of the element.
-
-        :returns: The tuple (x, y) of element's centroid
-        """
-        centroid = self.shape.centroid
-        return (centroid.x, centroid.y)
+        dr = np.sqrt(((self._points[1:] - self._points[:-1])**2).sum(1))
+        return dr.sum()*self.width
 
     def to_gds(self, multiplier): 
         """
@@ -601,30 +458,24 @@ class Path(ElementBase):
         """
         Return a list of matplotlib artists to draw this object        
 
+        .. Warning::
+            
+            Path endpoints are not rendered correctly. They always display
+            as half-circles.
+
         Paths are rendered by first converting them to a shapely polygon
         and then converting this to a descartes polgyonpatch. This generates
-        a path whose line width scales with the drawing size.
+        a path whose line width scales with the drawing size. Aside from being
+        convoluted it means that path ends always render as half-circles.
 
         """
-        
-        cap_style = {0:2, 1:1, 2:3}
+         
         points=[tuple(p) for p in self.points]
         lines = shapely.geometry.LineString(points)
-        poly = lines.buffer(self.width/2., cap_style=cap_style[self.pathtype], join_style=2, mitre_limit=np.sqrt(2))
-
+        poly = lines.buffer(self.width/2.)
+        
         return [descartes.PolygonPatch(poly, lw=0, **self._layer_properties(self.layer))]
 
-    @property
-    def shape(self):
-        """
-        A shapely polygon representation of the boundary
-        """
-        cap_style = {0:2, 1:1, 2:3} 
-        points=[tuple(p) for p in self.points]
-        line = shapely.geometry.asLineString(points)
-        s = line.buffer(self.width/2., cap_style=cap_style[self.pathtype], join_style=2, mitre_limit=np.sqrt(2))
-        s.laydat = self.laydat
-        return s
 
 
 class Text(ElementBase):
@@ -638,18 +489,15 @@ class Text(ElementBase):
     :param magnification: Magnification factor for the label.
     :param layer: The GDSII layer number for this element.
         Defaults to core.default_layer.
-    :param datatype: The GDSII texttype for the label (between 0 and 63).
+    :param datatype: The GDSII text type for the label (between 0 and 63).
 
     .. note::
         This is a direct equivalent to the Text element found in the GDSII
-        specification. With the caveat that the GDSII texttype record is mapped
-        to the datatype attribute in gdsCAD.
-   
+        specification.    
 
     Text that can be used to label parts of the geometry or display
     messages. The text does not create additional geometry, it's meant for
     display and labeling purposes only.
-
 
     Examples::
         
@@ -657,31 +505,25 @@ class Text(ElementBase):
         myCell.add(txt)
     """
 
-    _anchor = {'nw':0,  'top left':0,      'upper left':0,   'tl':0,
-               'n':1,   'top center':1,    'upper center':1, 'tc':1,
-               'ne':2,  'top right':2,     'upper right':2,  'tr':2,
-               'w':4,   'middle left':4,                     'cl':4,
-               'o':5,   'middle center':5,                   'cc':5,
-               'e':6,   'middle right':6,                    'cr':6,
-               'sw':8,  'bottom left':8,   'lower left':8,   'bl':8,
-               's':9,   'bottom center':9, 'lower center':9, 'bc':9,
-               'se':10, 'bottom right':10, 'lower right':10, 'br':10}
+    _anchor = {'nw':0,    'top left':0,         'upper left':0,
+               'n':1,    'top center':1,         'upper center':1,
+               'ne':2,    'top right':2,         'upper right':2,
+               'w':4,    'middle left':4,
+               'o':5,    'middle center':5,
+               'e':6,    'middle right':6,
+               'sw':8,    'bottom left':8,     'lower left':8,
+               's':9,    'bottom center':9,     'lower center':9,
+               'se':10, 'bottom right':10,     'lower right':10}
 
     show = _show
 
-    def __init__(self, text, position, anchor='o', rotation=None,
-                 magnification=None, layer=None, datatype=None, laydat=None,
-                 x_reflection=None, dtype=np.float32):
+    def __init__(self, text, position, anchor='o', rotation=None, magnification=None, layer=None, datatype=None, x_reflection=None, dtype=np.float32):
         ElementBase.__init__(self, position, dtype=dtype)
         self.text = text
         self.anchor = Text._anchor[anchor.lower()]
         self.rotation = rotation
         self.x_reflection = x_reflection
         self.magnification = magnification
-
-        ## Enable specifying (layer, datatype) with laydat tuple
-        if laydat:
-            (layer, datatype) = laydat
 
         if layer is None:
             self.layer = default_layer
@@ -693,14 +535,9 @@ class Text(ElementBase):
         else:
             self.datatype = datatype
 
-    def __repr__(self):
-        text = self.text[:10] + '...' if len(self.text)>10 else ''
-        return self.__class__.__name__ + \
-            "(\"{}\", posn={}, laydat=({},{}), anchor={}, rot={}, mag={}, x_refl={})".format(text, self.points.tolist(), self.layer, self.datatype, self.anchor, self.rotation, self.magnification, self.x_reflection)
 
     def __str__(self):
-        return self.__class__.__name__ + \
-            "(\"{}\", posn={}, laydat=({},{}), anchor={}, rot={}, mag={}, x_refl={})".format(self.text, self.points.tolist(), self.layer, self.datatype, self.anchor, self.rotation, self.magnification, self.x_reflection)
+        return "Text (\"{0}\", at ({1[0]}, {1[1]}), rotation {2}, magnification {3}, layer {4}, texttype {5})".format(self.text, self.points, self.rotation, self.magnification, self.layer, self.texttype)
 
     def area(self):
         """
@@ -708,6 +545,7 @@ class Text(ElementBase):
         
         For text this is always 0, since it is non-printing.
         """
+
         return 0
 
     def to_gds(self, multiplier):
@@ -799,8 +637,7 @@ class Text(ElementBase):
 
         return [matplotlib.text.Text(self.points[0], self.points[1], self.text, **self._layer_properties(self.layer))]
 
-
-class Elements(BooleanOps, object):
+class Elements(object):
     """ 
     A list-like collection of Boundary and/or Path objects.
 
@@ -838,10 +675,10 @@ class Elements(BooleanOps, object):
 
     Examples::
         
-        square_pts=[[0,0], [1,0], [1,1], [0,1]]
+        square_pts=[[0,0, [1,0], [1,1], [0,1]]]        
         triangle_pts=[[1,0], [2,0], [2,2]]
 
-        square=Boundary(square_pts)
+        square=Polygon(square_pts)
         triangle=Path(triangle_pts, width=0.5)
 
         # Create an empty list and fill it later
@@ -866,16 +703,12 @@ class Elements(BooleanOps, object):
     """
     show = _show
 
-    def __init__(self, obj=None, layer=None, datatype=None, laydat=None, obj_type=None, **kwargs):
+    def __init__(self, obj=None, layer=None, datatype=None, obj_type=None, **kwargs):
 
         self.obj = []
 
-        ## Enable specifying (layer, datatype) with laydat tuple
-        if laydat:
-            (layer, datatype) = laydat
-
         # No parameters => Create an empty Elements list
-        if (laydat is None) and (layer is None) and (obj is None):
+        if (layer is None) and (obj is None):
             return #Empty list
 
         # A list of elements => Create an identical list
@@ -949,46 +782,16 @@ class Elements(BooleanOps, object):
         for p in self:
             p.datatype=val
   
-    @property
-    def laydat(self):
-        """
-        Get the laydat
-        """
-        return (self._layer, self._datatype)
-    
-    @laydat.setter
-    def laydat(self, val):
-        """
-        Set the laydat
-        """
-        (self._layer, self._datatype)=val
-        for p in self:
-            (p.layer, p.datatype)=val
-      
     def copy(self, suffix=None):
         """
         Make a copy of the object and all contained elements
         """
         return copy.deepcopy(self)
 
-    def __repr__(self):
-        if len(self.obj):
-            ans =  "Elements(["
-            for e in self:
-                ans += '\n ' + repr(e)
-            return ans+' ])'
-        else:
-            return "Elements()"
-    
     def __str__(self):
-        if len(self.obj):
-            ans =  "Elements(["
-            for e in self:
-                ans += '\n ' + str(e)
-            return ans+' ])'
-        else:
-            return "Elements()"
-    
+        return "Elements layer={}, datatype={} ({} polygons, {} vertices)".format(self.layer, self.datatype, len(self.polygons), sum([len(p.points) for p in self.polygons]))
+
+
     def add(self, obj):
         """
         Add a new element or list of elements to this list.
@@ -996,6 +799,7 @@ class Elements(BooleanOps, object):
         :param element: The element to be inserted in this list.
         
         """
+        
         if isinstance(obj, Elements):
             self._check_obj_list(obj)
             self.obj.extend(obj)
@@ -1004,25 +808,7 @@ class Elements(BooleanOps, object):
         if not isinstance(obj, ElementBase):
             raise ValueError('Can only add a drawing element to Elements')
 
-        if len(self.obj) == 0:
-            self.layer = obj.layer
-            self.datatype = obj.datatype
-
         self.obj.append(obj)
-
-    def remove(self, element):
-        """
-        Remove an element or list of elements.
-
-        :param element: The element or list of elements to be removed.
-        """
-        if isinstance(element, (Elements)):
-            element = list(element)
-        elif not isinstance(element, (tuple, list)):
-            element = [element]
-        
-        for e in element:
-            self.obj.remove(e)
 
     def __len__(self):
         """
@@ -1058,6 +844,7 @@ class Elements(BooleanOps, object):
 
         The transformation acts in place.
         """
+        
         displacement=np.array(displacement)
         for p in self:
             p.translate(displacement)
@@ -1109,6 +896,7 @@ class Elements(BooleanOps, object):
 
         The transformation acts in place.        
         """
+        
         for p in self:
             p.scale(k, origin)
 
@@ -1118,21 +906,13 @@ class Elements(BooleanOps, object):
         """
         Calculate the area of the elements.
         """
+
         area = 0        
         for e in self:
             area += e.area()
         
         return area
         
-    def centroid(self):
-        """
-        Calculates the centroid of all the elements in Elements.
-
-        :returns: The tuple (x, y) of Element's centroid
-        """
-        centroid = self.shape.centroid
-        return (centroid.x, centroid.y)
-
     def to_gds(self, multiplier):
         """
         Convert this object to a series of GDSII elements.
@@ -1174,13 +954,6 @@ class Elements(BooleanOps, object):
             art+=p.artist()
         return art
 
-    @property
-    def shape(self):
-        """
-        A shapely polygon representation of the boundary
-        """
-        return shapely.geometry.MultiPolygon([element.shape for element in self.obj])
-
 
 class Layout(dict):
     """
@@ -1213,22 +986,12 @@ class Layout(dict):
 
     show=_show
     
-    def __init__(self, name='library', unit=1e-6, precision=1.e-9, created=None, modified=None):
+    def __init__(self, name='library', unit=1e-6, precision=1.e-9):
 
         dict.__init__(self)
         self.name=name
         self.unit=unit
         self.precision=precision
-
-        now = datetime.datetime.today()
-        if created:
-            self.created=created
-        else:
-            self.created=now
-        if modified:
-            self.modified=modified
-        else:
-            self.modified=now
 
     def add(self, cell):
         """
@@ -1256,7 +1019,7 @@ class Layout(dict):
         """
 
         dependencies = set(self.values())
-        for cell in self.values():
+        for cell in list(self.values()):
             dependencies |= set(cell.get_dependencies())
                     
         return list(dependencies)
@@ -1309,17 +1072,12 @@ class Layout(dict):
             for n in longlist:
                 print(n, ' : %d chars'%len(n))
             
+        now = datetime.datetime.today()
         if len(self.name)%2 != 0:
             name = self.name + '\0'
         else:
             name = self.name
-        
-        c = list(self.created.timetuple()[:6])
-        m = list(self.modified.timetuple()[:6])
-        outfile.write(struct.pack('>19h', 6, 0x0002, 0x0258, 28, 0x0102,
-                                  c[0], c[1], c[2], c[3], c[4], c[5],
-                                  m[0], m[1], m[2], m[3], m[4], m[5],
-                                  4+len(name), 0x0206) + name.encode('ascii') + struct.pack('>2h', 20, 0x0305) + _eight_byte_real(self.precision / self.unit) + _eight_byte_real(self.precision))
+        outfile.write(struct.pack('>19h', 6, 0x0002, 0x0258, 28, 0x0102, now.year, now.month, now.day, now.hour, now.minute, now.second, now.year, now.month, now.day, now.hour, now.minute, now.second, 4+len(name), 0x0206) + name.encode('ascii') + struct.pack('>2h', 20, 0x0305) + _eight_byte_real(self.precision / self.unit) + _eight_byte_real(self.precision))
 
         for cell in cells:
             outfile.write(cell.to_gds(self.unit / self.precision, duplicates))
@@ -1337,7 +1095,7 @@ class Layout(dict):
         :returns: List of top level cells.
         """
         top = list(self.values())
-        for cell in self.values():
+        for cell in list(self.values()):
             for dependency in cell.get_dependencies():
                 if dependency in top:
                     top.remove(dependency)
@@ -1375,7 +1133,6 @@ class Layout(dict):
         
         return artists
 
-
 class Cell(object):
     """
     Collection of elements, both geometric objects and references to other
@@ -1387,20 +1144,10 @@ class Cell(object):
 
     show=_show
      
-    def __init__(self, name, created=None, modified=None):
+    def __init__(self, name):
         self.name = str(name)
         self._objects = []
         self._references = []
-
-        now = datetime.datetime.today()
-        if created:
-            self.created=created
-        else:
-            self.created=now
-        if modified:
-            self.modified=modified
-        else:
-            self.modified=now
 
     @property
     def elements(self):
@@ -1420,18 +1167,6 @@ class Cell(object):
         """
         return tuple(self._references)
  
-    def objects_by_laydat(self, laydat):
-        """
-        Returns a list of objects of this cell that match a laydat tuple.
-
-        :returns: list of objects of this cell that match a laydat tuple.
-        """
-        objects = []
-        for element in self.objects:
-            if (element.layer, element.datatype) == laydat:
-                objects.append(element)
-        return objects
-
     def __str__(self):
         return "Cell (\"{}\", {} elements, {} references)".format(self.name, len(self.objects),
                                                                              len(self.references))
@@ -1472,18 +1207,13 @@ class Cell(object):
         
         :returns: The GDSII binary string that represents this cell.
         """
+        now = datetime.datetime.today()
         
         name = self.unique_name if self.name in duplicates else self.name
 
         if len(name)%2 != 0:
             name = name + '\0'
-            
-        c = list(self.created.timetuple()[:6])
-        m = list(self.modified.timetuple()[:6])
-        data = struct.pack('>16h', 28, 0x0502,
-                            c[0], c[1], c[2], c[3], c[4], c[5],
-                            m[0], m[1], m[2], m[3], m[4], m[5],
-                           4 + len(name), 0x0606) + name.encode('ascii')
+        data = struct.pack('>16h', 28, 0x0502, now.year, now.month, now.day, now.hour, now.minute, now.second, now.year, now.month, now.day, now.hour, now.minute, now.second, 4 + len(name), 0x0606) + name.encode('ascii')
         for element in self:
             if isinstance(element, ReferenceBase):
                 data += element.to_gds(multiplier, duplicates)
@@ -1552,27 +1282,6 @@ class Cell(object):
 
         self.bb_is_valid = False
     
-    def remove(self, element):
-        """
-        Remove an element or list of elements from this cell.
-
-        :param element: The element or list of elements to be removed from this cell.
-
-        """
-        if isinstance(element, (Elements)):
-            element = list(element)
-        elif not isinstance(element, (tuple, list)):
-            element = [element]
-
-        for e in element:
-            if isinstance(e, ReferenceBase):
-                self._references.remove(e)
-            else:
-                self._objects.remove(e)
-#        self._objects = [e for e in self._objects if e not in element]
-
-        self.bb_is_valid = False
-
     def area(self, by_layer=False):
         """
         Calculate the total area of the elements on this cell, including
@@ -1587,7 +1296,7 @@ class Cell(object):
             cell_area = {}
             for element in self.elements:
                 element_area = element.area(True)
-                for ll in element_area.iterkeys():
+                for ll in element_area.keys():
                     if ll in cell_area:
                         cell_area[ll] += element_area[ll]
                     else:
@@ -1617,7 +1326,7 @@ class Cell(object):
     def get_layers(self):
         """
         Returns a list of layers in this cell.
-
+        
         :returns: List of the layers used in this cell.
         """
         layers = set()
@@ -1628,18 +1337,6 @@ class Cell(object):
                 layers |= set(element.ref_cell.get_layers())
 
         return list(layers)
-
-    def get_laydats(self):
-        """
-        Returns a list of (layer, datatype) tuples only in this cell.
-
-        :returns: list of (layer, datatype) tuples only in this cell.
-        """
-        layers_datatypes = set()
-        for element in self.elements:
-            if isinstance(element, (ElementBase, Elements)):
-                layers_datatypes.add((element.layer, element.datatype))
-        return sorted(list(layers_datatypes))
 
     @property
     def bounding_box(self):
@@ -1780,6 +1477,7 @@ class ReferenceBase:
 
         return self        
 
+
     def get_dependencies(self, include_elements=False):
         return [self.ref_cell]+self.ref_cell.get_dependencies(include_elements)
     
@@ -1872,7 +1570,7 @@ class CellReference(ReferenceBase):
             if by_layer:
                 factor = self.magnification * self.magnification
                 cell_area = self.ref_cell.area(True)
-                for kk in cell_area.iterkeys():
+                for kk in cell_area.keys():
                     cell_area[kk] *= factor
                 return cell_area
             else:
@@ -1930,11 +1628,8 @@ class CellReference(ReferenceBase):
 
 
         xform=matplotlib.transforms.Affine2D()
-        if self.x_reflection:
-            xform.scale(1, -1)
-            
         if self.magnification is not None:
-            xform.scale(self.magnification, self.magnification)
+            xform.scale(self.magnification)
         
         if self.rotation is not None:
             xform.rotate_deg(self.rotation)
@@ -1959,7 +1654,6 @@ class CellReference(ReferenceBase):
             e.scale(mag).rotate(rot).translate(self.origin)
         
         return elements
-
 
 class CellArray(ReferenceBase):
     """
@@ -2077,7 +1771,7 @@ class CellArray(ReferenceBase):
             factor = self.cols * self.rows * self.magnification * self.magnification
         if by_layer:
             cell_area = self.ref_cell.area(True)
-            for kk in cell_area.iterkeys():
+            for kk in cell_area.keys():
                 cell_area[kk] *= factor
             return cell_area
         else:
@@ -2130,7 +1824,10 @@ class CellArray(ReferenceBase):
     def artist(self):
         """
         Return a list of matplotlib artists for drawing this object
+
+        .. warning::
             
+            Does not yet handle x_reflections correctly
         """        
 
         mag=1.0
@@ -2156,9 +1853,6 @@ class CellArray(ReferenceBase):
 
         #Rotate and translate the patterned array        
         trans=matplotlib.transforms.Affine2D()
-        if self.x_reflection:
-            trans.scale(1, -1)
-        
         if self.rotation is not None:
             trans.rotate_deg(self.rotation)
 
@@ -2192,7 +1886,16 @@ class CellArray(ReferenceBase):
         
         return elements
 
-def GdsImport(infile, rename={}, layers={}, datatypes={}, verbose=True, unit=1e-6):
+
+#def GdsImport(infile, unit=None, rename={}, layers={}, datatypes={}, texttypes={}, verbose=True):
+#    imp=_GdsImport(infile, unit=unit, rename=rename, layers=layers, datatypes=datatypes, texttypes=texttypes, verbose=verbose)
+ #   out=Layout('IMPORT')
+ #   for v in imp.cell_dict.values():
+#        out.add(v)
+#
+#    return out
+
+def GdsImport(infile, rename={}, layers={}, datatypes={}, verbose=True):
     """
     Import a new Layout from a GDSII stream file.
 
@@ -2204,10 +1907,8 @@ def GdsImport(infile, rename={}, layers={}, datatypes={}, verbose=True, unit=1e-
         and values must be integers.
     :param datatypes: Dictionary used to convert the datatypes in the imported cells.
         Keys and values must be integers.
-    :param verbose: If False, import is silent. If True or 1, displays warnings
-        about unsupported records. If 2 lists all records read.
-    :param unit: Unit of the imported GDS file. The library precicions will be set
-        accordingly.
+    :param verbose: If False, suppresses warnings about unsupported elements in the
+        imported file.
     :returns: A :class:``Layout`` containing the imported gds file.
     
     Notes::
@@ -2219,11 +1920,15 @@ def GdsImport(infile, rename={}, layers={}, datatypes={}, verbose=True, unit=1e-
     Examples::
 
         layout = core.GdsImport('sample.gds')
-        
-    The import function returns a Layout containing only top level cells.
     """
 
-    record_name = ('HEADER', 'BGNLIB', 'LIBNAME', 'UNITS', 'ENDLIB', 'BGNSTR', 'STRNAME', 'ENDSTR', 'BOUNDARY', 'PATH', 'SREF', 'AREF', 'TEXT', 'LAYER', 'DATATYPE', 'WIDTH', 'XY', 'ENDEL', 'SNAME', 'COLROW', 'TEXTNODE', 'NODE', 'TEXTTYPE', 'PRESENTATION', 'SPACING', 'STRING', 'STRANS', 'MAG', 'ANGLE', 'UINTEGER', 'USTRING', 'REFLIBS', 'FONTS', 'PATHTYPE', 'GENERATIONS', 'ATTRTABLE', 'STYPTABLE', 'STRTYPE', 'ELFLAGS', 'ELKEY', 'LINKTYPE', 'LINKKEYS', 'NODETYPE', 'PROPATTR', 'PROPVALUE', 'BOX', 'BOXTYPE', 'PLEX', 'BGNEXTN', 'ENDTEXTN', 'TAPENUM', 'TAPECODE', 'STRCLASS', 'RESERVED', 'FORMAT', 'MASK', 'ENDMASKS', 'LIBDIRSIZE', 'SRFNAME', 'LIBSECUR')
+    _record_name = ('HEADER', 'BGNLIB', 'LIBNAME', 'UNITS', 'ENDLIB', 'BGNSTR', 'STRNAME', 'ENDSTR', 'BOUNDARY', 'PATH', 'SREF', 'AREF', 'TEXT', 'LAYER', 'DATATYPE', 'WIDTH', 'XY', 'ENDEL', 'SNAME', 'COLROW', 'TEXTNODE', 'NODE', 'TEXTTYPE', 'PRESENTATION', 'SPACING', 'STRING', 'STRANS', 'MAG', 'ANGLE', 'UINTEGER', 'USTRING', 'REFLIBS', 'FONTS', 'PATHTYPE', 'GENERATIONS', 'ATTRTABLE', 'STYPTABLE', 'STRTYPE', 'ELFLAGS', 'ELKEY', 'LINKTYPE', 'LINKKEYS', 'NODETYPE', 'PROPATTR', 'PROPVALUE', 'BOX', 'BOXTYPE', 'PLEX', 'BGNEXTN', 'ENDTEXTN', 'TAPENUM', 'TAPECODE', 'STRCLASS', 'RESERVED', 'FORMAT', 'MASK', 'ENDMASKS', 'LIBDIRSIZE', 'SRFNAME', 'LIBSECUR')
+    _unused_records = (0x05, 0x00, 0x01, 0x02, 0x034, 0x38)
+
+
+    layout = Layout('IMPORT')
+    
+    _incomplete = []
 
     if infile.__class__ == ''.__class__:
         infile = open(infile, 'rb')
@@ -2231,177 +1936,118 @@ def GdsImport(infile, rename={}, layers={}, datatypes={}, verbose=True, unit=1e-
     else:
         close = False
 
-    cell_dict = {}
     emitted_warnings = []
-    rec_typ, data =  _read_record(infile)
+    record =  _read_record(infile)
     kwargs = {}
     create_element = None
-    i = -1
-    while rec_typ is not None:
-        i+=1
-        rname = record_name[rec_typ]
-        if verbose==2:       
-            print(i, ':', rname, end=' ')
-
-        # Library Head/Tail
-        if 'HEADER' == rname:
-            if verbose==2:
-                print(data[0], end=' ')
-        elif 'BGNLIB' == rname:
-            kwargs['created'] = datetime.datetime(*data.tolist()[:6])
-            kwargs['modified'] = datetime.datetime(*data.tolist()[6:])
-            if verbose==2:
-                print("created %d/%d/%d,%d:%d:%d modified %d/%d/%d,%d:%d:%d" % tuple(data.tolist()), end=' ')
-        elif 'LIBNAME' == rname:
-            kwargs['name'] = data.decode('ascii')
-            if verbose==2:
-                print(kwargs['name'], end=' ')
-        elif 'UNITS' == rname:
-            factor = data[0]
-            kwargs['precision'] = unit * factor
-            kwargs['unit'] = unit
-            if verbose==2:
-                print(kwargs['unit'], end=' ')
-            layout = Layout(**kwargs)
-            kwargs={}
-        elif 'ENDLIB' == rname:
-            if verbose==2:
-                print()
-            break
-
-        # Cell Creation
-        elif 'BGNSTR' == rname:
-            kwargs['created'] = datetime.datetime(*data.tolist()[:6])
-            kwargs['modified'] = datetime.datetime(*data.tolist()[6:])
-            if verbose==2:
-                print("created %d/%d/%d,%d:%d:%d modified %d/%d/%d,%d:%d:%d" % tuple(data.tolist()), end=' ')
-        elif 'STRNAME' == rname:
-            if not str is bytes:
-                if data[-1] == 0:
-                    data = data[:-1].decode('ascii')
-                else:
-                    data = data.decode('ascii')
-            name = rename.get(data, data)
-            cell = Cell(name, **kwargs)
-            kwargs={}
-            cell_dict[name] = cell
-            if verbose==2:
-                print(name, end=' ')
-        elif 'ENDSTR' == rname:
-            cell = None
-
-        # Element Creation
-        elif 'BOUNDARY' == rname:
-            create_element =  _create_polygon
-        elif 'PATH' == rname:
-            create_element =  _create_path
-        elif 'SREF' == rname:
-            create_element =  _create_reference
-        elif 'AREF' == rname:
-            create_element =  _create_array
-        elif 'TEXT' == rname:
-            create_element =  _create_text
-        elif 'ENDEL' == rname:
+    while record is not None:
+        ## LAYER
+        if record[0] == 0x0d:
+            kwargs['layer'] = layers.get(record[1][0], record[1][0])
+        ## DATATYPE
+        elif record[0] == 0x0e:
+            kwargs['datatype'] = datatypes.get(record[1][0], record[1][0])
+        ## TEXTTYPE
+        elif record[0] == 0x16:
+            kwargs['texttype'] = record[1][0]
+        ## XY
+        elif record[0] == 0x10:
+            if 'xy' not in kwargs:
+                kwargs['xy'] = factor * record[1]
+            else:
+                kwargs['xy'] = np.hstack((kwargs['xy'], factor * record[1]))
+        ## WIDTH
+        elif record[0] == 0x0f:
+            kwargs['width'] = factor * abs(record[1][0])
+            if record[1][0] < 0 and record[0] not in emitted_warnings:
+                warnings.warn("[GDSPY] Paths with absolute width value are not supported. Scaling these paths will also scale their width.", stacklevel=2)
+                emitted_warnings.append(record[0])
+        ## ENDEL
+        elif record[0] == 0x11:
             if create_element is not None:
                 cell.add(create_element(**kwargs))
-            create_element = None
+                create_element = None
             kwargs = {}
-
-        # Element Data and Modifiers
-        elif 'LAYER' == rname:
-            kwargs['layer'] = layers.get(data[0], data[0])
-            if verbose==2:
-                print(kwargs['layer'], end=' ')
-        elif 'DATATYPE' == rname or 'TEXTTYPE' == rname:
-            kwargs['datatype'] = datatypes.get(data[0], data[0])
-            if verbose==2:
-                print(kwargs['datatype'], end=' ')
-        elif 'XY'  == rname:
-            if 'xy' not in kwargs:
-                kwargs['xy'] = factor * data
-            else:
-                kwargs['xy'] = np.hstack((kwargs['xy'], factor * data))
-            if verbose==2:
-                print(kwargs['xy'], end=' ')
-        elif 'WIDTH' == rname:
-            kwargs['width'] = factor * abs(data[0])
-            if data[0] < 0 and rname not in emitted_warnings:
-                warnings.warn("[GDSPY] Paths with absolute width value are not supported. Scaling these paths will also scale their width.", stacklevel=2)
-                emitted_warnings.append(rname)
-        elif 'PATHTYPE' == rname:
-            kwargs['pathtype'] = data[0]
-            if verbose==2:
-                print(kwargs['pathtype'], end=' ')
-        elif 'SNAME' == rname:
+        ## BOUNDARY
+        elif record[0] == 0x08:
+            create_element =  _create_polygon
+        ## PATH
+        elif record[0] == 0x09:
+            create_element =  _create_path
+        ## TEXT
+        elif record[0] == 0x0c:
+            create_element =  _create_text
+        ## SNAME
+        elif record[0] == 0x12:
             if not str is bytes:
-                if data[-1] == 0:
-                    data = data[:-1].decode('ascii')
+                if record[1][-1] == 0:
+                    record[1] = record[1][:-1].decode('ascii')
                 else:
-                    data = data.decode('ascii')
-            kwargs['ref_cell'] = rename.get(data, data)
-            if verbose==2:
-                print(',', kwargs['ref_cell'], end=' ')
-        elif 'COLROW' == rname:
-            kwargs['cols'] = data[0]
-            kwargs['rows'] = data[1]
-        elif 'STRANS' == rname:
-            kwargs['x_reflection'] = ((long(data[0]) & 0x8000) > 0)
-            if verbose==2:
-                print(kwargs['x_reflection'], end=' ')
-        elif 'MAG' == rname:
-            kwargs['magnification'] = data[0]
-            if verbose==2:
-                print(kwargs['magnification'], end=' ')
-        elif 'ANGLE' == rname:
-            kwargs['rotation'] = data[0]
-            if verbose==2:
-                print(kwargs['rotation'], end=' ')
-        elif 'PRESENTATION' == rname:
-            kwargs['anchor'] = ['tl', 'tc', 'tr', None, 'cl', 'cc', 'cr', None, 'bl', 'bc', 'br'][data[0]]
-            if verbose==2:
-                print(kwargs['anchor'], end=' ')
-        elif 'STRING' == rname:
+                    record[1] = record[1].decode('ascii')
+            kwargs['ref_cell'] = rename.get(record[1], record[1])
+        ## COLROW
+        elif record[0] == 0x13:
+            kwargs['columns'] = record[1][0]
+            kwargs['rows'] = record[1][1]
+        ## STRANS
+        elif record[0] == 0x1a:
+            kwargs['x_reflection'] = ((int(record[1][0]) & 0x8000) > 0)
+        ## MAG
+        elif record[0] == 0x1b:
+            kwargs['magnification'] = record[1][0]
+        ## ANGLE
+        elif record[0] == 0x1c:
+            kwargs['rotation'] = record[1][0]
+        ## SREF
+        elif record[0] == 0x0a:
+            create_element =  _create_reference
+        ## AREF
+        elif record[0] == 0x0b:
+            create_element =  _create_array
+        ## STRNAME
+        elif record[0] == 0x06:
             if not str is bytes:
-                if data[-1] == 0:
-                    kwargs['text'] = data[:-1].decode('ascii')
+                if record[1][-1] == 0:
+                    record[1] = record[1][:-1].decode('ascii')
                 else:
-                    kwargs['text'] = data.decode('ascii')
+                    record[1] = record[1].decode('ascii')
+            name = rename.get(record[1], record[1])
+            cell = Cell(name)
+            layout[name] = cell
+        ## STRING
+        elif record[0] == 0x19:
+            if not str is bytes:
+                if record[1][-1] == 0:
+                    kwargs['text'] = record[1][:-1].decode('ascii')
+                else:
+                    kwargs['text'] = record[1].decode('ascii')
             else:
-                kwargs['text'] = data
-            if verbose==2:
-                print(kwargs['text'], end=' ')
-
-        # Not supported
-        elif verbose and rname not in emitted_warnings:
-            warnings.warn("Record type {0} not supported by GdsImport.".format(rname), stacklevel=2)
-            emitted_warnings.append(rname)
-
-        rec_typ, data =  _read_record(infile)
-        if verbose==2: print('')
-
+                kwargs['text'] = record[1]
+        ## ENDSTR
+        elif record[0] == 0x07:
+            cell = None
+        ## UNITS
+        elif record[0] == 0x03:
+            factor = record[1][0]
+        ## PRESENTATION
+        elif record[0] == 0x17:
+            kwargs['anchor'] = ['nw', 'n', 'ne', None, 'w', 'o', 'e', None, 'sw', 's', 'se'][record[1][0]]
+        ## ENDLIB
+        elif record[0] == 0x04:
+            for ref in  _incomplete:
+                if ref.ref_cell in  cell_dict:
+                    ref.ref_cell =  cell_dict[ref.ref_cell]
+                else:
+                    ref.ref_cell = Cell.cell_dict.get(ref.ref_cell, ref.ref_cell)
+        ## Not supported
+        elif verbose and record[0] not in emitted_warnings and record[0] not in _unused_records:
+            warnings.warn("[GDSPY] Record type {0} not supported by gds_import.".format(_record_name[record[0]]), stacklevel=2)
+            emitted_warnings.append(record[0])
+        record =  _read_record(infile)
     if close:
         infile.close()
-   
-    # Make connections from cell references to all cells objects
-    # We cannot add the cells to the library yet, since we cannot assert that all its
-    # dependencies were resolved.
-    for c in cell_dict.values():
-        for r in c.references:
-            r.ref_cell = cell_dict[r.ref_cell]
-
-    # Add all the cells to the library.
-    warnings.filterwarnings('ignore')  # suppress duplicate cell warning
-    for c in cell_dict.values():
-        if c not in layout:
-            layout.add(c)
-    warnings.filterwarnings('default')
-
-    # Remove non-top level cells             
-    for k in [j for j in layout.keys() if j not in [i.name for i in layout.top_level()]]:
-        layout.pop(k)
-    
+        
     return layout
-
 
 def DxfImport(fname, scale=1.0):
     """
@@ -2420,9 +2066,9 @@ def DxfImport(fname, scale=1.0):
 
     art = []    
     for e in dxf.entities:
-        if isinstance(e, dxfgrabber.dxfentities.LWPolyline):
+        if isinstance(e, dxfgrabber.entities.LWPolyline):
             art.append(_parse_POLYLINE(e, scale))
-        elif isinstance(e, dxfgrabber.dxfentities.Line):
+        elif isinstance(e, dxfgrabber.entities.Line):
             art.append(_parse_LINE(e, scale))
         else:        
             print('Ignoring unknown entity type %s in DxfImport.' % type(e))
@@ -2493,7 +2139,7 @@ def _read_record(stream):
     """
     header = stream.read(4)
     if len(header) < 4:
-        return None, None
+        return None
     size, rec_type = struct.unpack('>HH', header)
     data_type = (rec_type & 0x00ff)
     rec_type = rec_type // 256
@@ -2513,35 +2159,24 @@ def _read_record(stream):
                 data = data[:-1]
     return [rec_type, data]
 
-def _clean_args(cls, kwargs):
-    """
-    Remove arguments with unknown names from kwargs 
-    """
-    
-    arg_names = inspect.getargspec(cls.__init__).args
-    return {k: kwargs[k] for k in kwargs if k in arg_names}
-
-def _create_polygon(**kwargs):
-    xy = kwargs.pop('xy')    
-    kwargs['points'] = xy.reshape((xy.size // 2, 2))
-    kwargs = _clean_args(Boundary, kwargs)
-    return Boundary(**kwargs)
+def _create_polygon(layer, datatype, xy):
+    return Boundary(xy.reshape((xy.size // 2, 2)), layer, datatype)
 
 def _create_path(**kwargs):
     xy = kwargs.pop('xy')
     kwargs['points'] = xy.reshape((xy.size // 2, 2))
-    kwargs = _clean_args(Path, kwargs)    
     return Path(**kwargs)
 
-def _create_text(xy, **kwargs):
+def _create_text(xy, width=None, **kwargs):
     kwargs['position'] = xy
-    kwargs = _clean_args(Text, kwargs)
     return Text(**kwargs)
 
 def _create_reference(**kwargs):
     kwargs['origin'] = kwargs.pop('xy')
-    kwargs = _clean_args(CellReference, kwargs)
-    return CellReference(**kwargs)
+    ref = CellReference(**kwargs)
+    if not isinstance(ref.ref_cell, Cell):
+         _incomplete.append(ref)
+    return ref
 
 def _create_array(**kwargs):
     xy = kwargs.pop('xy')
@@ -2557,12 +2192,13 @@ def _create_array(**kwargs):
             y3 = xy[5]
         if kwargs['x_reflection']:
             y3 = 2 * xy[1] - y3
-        kwargs['spacing'] = ((x2 - xy[0]) / kwargs['cols'], (y3 - xy[1]) / kwargs['rows'])
+        kwargs['spacing'] = ((x2 - xy[0]) / kwargs['columns'], (y3 - xy[1]) / kwargs['rows'])
     else:
-        kwargs['spacing'] = ((xy[2] - xy[0]) / kwargs['cols'], (xy[5] - xy[1]) / kwargs['rows'])
-
-    kwargs = _clean_args(CellArray, kwargs)
-    return CellArray(**kwargs)
+        kwargs['spacing'] = ((xy[2] - xy[0]) / kwargs['columns'], (xy[5] - xy[1]) / kwargs['rows'])
+    ref = CellArray(**kwargs)
+    if not isinstance(ref.ref_cell, Cell):
+         _incomplete.append(ref)
+    return ref
 
 def _compact_id(obj):
     """
@@ -2573,7 +2209,7 @@ def _compact_id(obj):
     """
 
     i=bin(id(obj))[2:]
-    chars=string.ascii_uppercase+string.ascii_lowercase+string.digits+'ab'
+    chars=string.ascii_uppercase+string.ascii_lowercase+string.digits+'?$'
 
     out=''
     while len(i):
@@ -2606,10 +2242,10 @@ def _eight_byte_real(value):
             byte1 = 0x80
             value = -value
         exponent = int(np.floor(np.log2(value) * 0.25))
-        mantissa = long(value * 16**(14 - exponent))
+        mantissa = int(value * 16**(14 - exponent))
         while mantissa >= 72057594037927936:
             exponent += 1
-            mantissa = long(value * 16**(14 - exponent))
+            mantissa = int(value * 16**(14 - exponent))
         byte1 += exponent + 64
         byte2 = (mantissa // 281474976710656)
         short3 = (mantissa % 281474976710656) // 4294967296

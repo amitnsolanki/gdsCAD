@@ -33,7 +33,6 @@ Unfilled Objects
     gdsCAD (based on gdspy) is released under the terms of the GNU GPL
     
 """
-from __future__ import absolute_import
 
 import os
 import numpy as np
@@ -645,7 +644,7 @@ class LineLabel(core.Elements):
         text = ''
         for symbol in self._symbols:
             ascii_found = False
-            for table in self._hershey_ascii_lookup_table.values():
+            for table in list(self._hershey_ascii_lookup_table.values()):
                 if symbol in table['to_ascii']:
                     ascii_found = True
                     text += chr(table['to_ascii'][symbol])
