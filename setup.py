@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from setuptools import setup
+from distutils.core import setup
 from git_version import sdist, get_version
 import os.path
 import glob
