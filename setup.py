@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 from distutils.core import setup
-from git_version import sdist, get_version
+from git_version import sdist
 import os.path
 import glob
 
 setup(
     name='gdsCAD',
-    version=get_version(),
     author='Andrew G. Mark',
     author_email='mark@is.mpg.de',
     url='https://github.com/hohlraum/gdsCAD',
@@ -26,7 +25,7 @@ setup(
                  'Intended Audience :: Science/Research',
                  'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
                  'Operating System :: OS Independent',
-                 'Programming Language :: Python :: 2.7',
+                 'Programming Language :: Python :: 3.6',
                  'Topic :: Scientific/Engineering',
                  'Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)'
                  ]
